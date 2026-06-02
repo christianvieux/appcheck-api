@@ -125,13 +125,64 @@ def getValueFromJsonPath(json: dict[str, Any], path: str) -> Any:
                 raise KeyError(f"Path '{path}' does not exist in the JSON response.")
         return value
     
-
 def handle_operator(operator: str, actual_value: Any, assertion: Any) -> tuple[bool, str]:
     # assertion can be either a SingleAssertionModel or a RuleItemModel depending on the operator
     if operator in operator_map:
         return operator_map[operator](actual_value, assertion)
     else:
         raise ValueError(f"Unsupported operator: {operator}")
+
+def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Response) -> tuple[bool, str]:
+        if assertion.type == "json_body":
+            if "application/json" in response.headers.get("Content-Type", ""):
+                # check if the response body is valid JSON
+                try:
+                    response_json = response.json()
+                except ValueError:
+                    return False, "Response body is not valid JSON."   
+                # check if the specified JSON path exists in the response JSON and get the actual value at that path
+                try:
+                    actual_value = getValueFromJsonPath(response_json, assertion.path) if assertion.path else response_json
+                except KeyError as e:
+                    return False, e.args[0] # used args[0] to avoid getting the quote-wrapped version of the error message
+                # evaluate the assertion based on the operator, expected value, actual value, and any additional conditions
+                try:
+                    assertion_passed, assertion_failure_message = handle_operator(assertion.operator, actual_value, assertion)
+                except ValueError as e:
+                    return False, str(e)
+                # return the result of the assertion along with any failure details if the assertion failed
+                if assertion_passed:
+                    return True, ""
+                else:
+                    return False, (
+                        f"Assertion failed for JSON body.\n"
+                        f"Path: '{assertion.path}'\n"
+                        f"Operator: '{assertion.operator}'\n"
+                        f"Details:\n{assertion_failure_message}"
+                    )
+            else:
+                return False, "Expected JSON response, but got different Content-Type. Actual Content-Type: " + response.headers.get("Content-Type", "")
+        else:
+            return False, f"Unsupported assertion type: {assertion.type}"
+    
+async def send_test_request(test_case: SingleTestCaseRequest) -> httpx.Response:
+    method = test_case.method.lower()
+    max_time_seconds = test_case.max_response_time_ms / 1000
+    # I'm using kwargs here to conditionally add the JSON body to the request if it's needed
+    request_kwargs: dict[str, Any] = { "timeout": max_time_seconds }
+    # Add the json body to the request if it's a method that supports a body and if a body is provided in the test case
+    if method != "get" and test_case.body is not None: 
+        request_kwargs["json"] = test_case.body
+    # Add headers to the request if headers are provided in the test case
+    if test_case.headers is not None:
+        request_kwargs["headers"] = test_case.headers
+    # Add query parameters to the request if query parameters are provided in the test case
+    if test_case.query_params is not None:
+        request_kwargs["params"] = test_case.query_params
+    
+    async with httpx.AsyncClient() as client: # creates an async HTTP client and closes it when done
+        method_func = getattr(client, method)
+        return await method_func(str(test_case.url), **request_kwargs,) 
 
 async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCaseResult:
     result = SingleTestCaseResult(
@@ -186,66 +237,9 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
     # Email/Discord/Slack alerts when something breaks.
     # TODO: dashboard analytics and trends
     # Charts for uptime, response time, failures, etc.
-    
-    def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Response) -> tuple[bool, str]:
-        # class SingleAssertionModel(BaseModel):
-        #     type: Literal["json_body"] 
-        #     path: str | None = None
-        #     operator: str
-        #     value: Any
-        #     conditions: list[RuleItemModel] = []
-
-        if assertion.type == "json_body":
-            if "application/json" in response.headers.get("Content-Type", ""):
-                # check if the response body is valid JSON
-                try:
-                    response_json = response.json()
-                except ValueError:
-                    return False, "Response body is not valid JSON."   
-                # check if the specified JSON path exists in the response JSON and get the actual value at that path
-                try:
-                    actual_value = getValueFromJsonPath(response_json, assertion.path) if assertion.path else response_json
-                except KeyError as e:
-                    return False, e.args[0] # used args[0] to avoid getting the quote-wrapped version of the error message
-                # evaluate the assertion based on the operator, expected value, actual value, and any additional conditions
-                try:
-                    assertion_passed, assertion_failure_message = handle_operator(assertion.operator, actual_value, assertion)
-                except ValueError as e:
-                    return False, str(e)
-                # return the result of the assertion along with any failure details if the assertion failed
-                if assertion_passed:
-                    return True, ""
-                else:
-                    return False, (
-                        f"Assertion failed for JSON body.\n"
-                        f"Path: '{assertion.path}'\n"
-                        f"Operator: '{assertion.operator}'\n"
-                        f"Details:\n{assertion_failure_message}"
-                    )
-            else:
-                return False, "Expected JSON response, but got different Content-Type. Actual Content-Type: " + response.headers.get("Content-Type", "")
-        else:
-            return False, f"Unsupported assertion type: {assertion.type}"
-    
-    
+     
     try:
-        async with httpx.AsyncClient() as client: # creates an async HTTP client and closes it when done
-            method = test_case.method.lower()
-            method_func = getattr(client, method)
-            max_time_seconds = test_case.max_response_time_ms / 1000
-            # I'm using kwargs here to conditionally add the JSON body to the request if it's needed
-            request_kwargs: dict[str, Any] = { "timeout": max_time_seconds }
-            # Add the json body to the request if it's a method that supports a body and if a body is provided in the test case
-            if method != "get" and test_case.body is not None: 
-                request_kwargs["json"] = test_case.body
-            # Add headers to the request if headers are provided in the test case
-            if test_case.headers is not None:
-                request_kwargs["headers"] = test_case.headers
-            # Add query parameters to the request if query parameters are provided in the test case
-            if test_case.query_params is not None:
-                request_kwargs["params"] = test_case.query_params
-
-            response = await method_func(str(test_case.url), **request_kwargs,)             
+        response = await send_test_request(test_case)
     except httpx.TimeoutException:
         result.status = "failed"
         result.failure_details.append(f"Request timed out after {test_case.max_response_time_ms} ms.")
