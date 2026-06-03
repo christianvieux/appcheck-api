@@ -1,9 +1,10 @@
 from typing import Any, Literal
 from pydantic import BaseModel, AnyUrl, PositiveInt, Field, field_validator, model_validator
+from enum import StrEnum
 
 
-HttpMethodAllowed = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
-
+HttpMethodAllowed     = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+NestedOperatorAllowed = Literal["every_item_matches", "some_item_matches"]
 SimpleOperatorAllowed = Literal[
     "equals",
     "not_equals",
@@ -18,29 +19,16 @@ SimpleOperatorAllowed = Literal[
     "contains",
 ]
 
-AssertionOperatorAllowed = Literal[
-    "equals",
-    "not_equals",
-    "exists",
-    "is_number",
-    "is_string",
-    "is_boolean",
-    "is_array",
-    "is_object",
-    "greater_than",
-    "less_than",
-    "contains",
-    "every_item_matches",
-    "some_item_matches",
-]
-
 OPERATORS_THAT_NEED_VALUE = {
-    "equals",
-    "not_equals",
-    "greater_than",
-    "less_than",
-    "contains",
+    "equals", 
+    "not_equals", 
+    "greater_than", 
+    "less_than", 
+    "contains"
 }
+
+AssertionOperatorAllowed = SimpleOperatorAllowed | NestedOperatorAllowed
+
 
 
 class RuleItemModel(BaseModel):

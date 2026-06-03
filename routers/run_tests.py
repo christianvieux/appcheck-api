@@ -2,8 +2,8 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, AnyUrl, PositiveInt, Field
 from typing import Any, Literal
-from services.test_runner import run_multiple_test_case
-from models.test_case import RunTestsRequest
+from services.test_runner import run_multiple_test_case, run_single_test_case
+from models.test_case import RunTestsRequest, SingleTestCaseRequest
 
 # Initialize router
 router = APIRouter()
@@ -39,3 +39,8 @@ async def run_tests(request: RunTestsRequest):
             "total" : total_tests,
             },
         }
+
+@router.post("/run-single-test", status_code=200)
+async def run_single_test(test_case: SingleTestCaseRequest):
+    test_result = await run_single_test_case(test_case)
+    return test_result  # return the single test result
