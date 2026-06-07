@@ -5,32 +5,33 @@ AppCheck is a post-deploy smoke testing platform.  It helps developers test if t
 
 ## Setup
 1. Setup the virtual environment first using:
-    ```python
+    ```bash
     python3 -m venv .venv
     ```
 
 2. Activate the virtual environment:
-    ```python
+    ```bash
     source .venv/bin/activate
+    # For fish use -> source .venv/bin/activate.fish
     ```
 
 3. Install the dependencies:
-    ```python
+    ```bash
     pip install -r requirements.txt
     ```
 
 4. Create a `.env` file in the root directory of the project and add the following line to it:
-    ```python
+    ```bash
     DATABASE_URL="sqlite+pysqlite:///PATH_TO_YOUR_DATABASE_FILE"
     ```
 
 5. The database is set up using SQLAlchemy and Alembic for migrations. The `DATABASE_URL` environment variable is used to specify the database connection string. In this case, we are using SQLite for simplicity, but you can use any database supported by SQLAlchemy.:
-    ```python
+    ```bash
     touch Database/data.db
     alembic upgrade head
     ```
 6. Run the API server using either of the following commands:
-    ```python
+    ```bash
     # For development mode with hot reload:
     uvicorn main:app --reload
     # OR dev mode:
@@ -39,22 +40,22 @@ AppCheck is a post-deploy smoke testing platform.  It helps developers test if t
 
 ## Alembic Migrations [*cmds*]
 - To create a **new migration** after making changes to the models:
-    ```python
-    alembic revision --autogenerate -m "Your migration message"
+    ```bash
+    alembic revision --autogenerate -m "migration message"
     ```
 - To **apply the latest migrations** to the database:
-    ```python
+    ```bash
     alembic upgrade head
     ```
 - To **downgrade** to a previous migration:
-    ```python
+    ```bash
     alembic downgrade <revision_id>
     ```
 - To view the **current** migration **history**:
-    ```python    
+    ```bash    
     alembic history
     ```
 - To view the **current** migration **status**:
-    ```python    
+    ```bash    
     alembic current
     ```
