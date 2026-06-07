@@ -184,8 +184,12 @@ class SingleTestCaseResult(BaseModel):
         examples=["passed"],
     )
 
+    response: dict[str, Any] | None = None
+
     failure_details: list[str] = Field(
         default_factory=list,
         description="List of failure messages if the test failed",
         examples=[["Expected status code 200, got 404"]],
     )
+
+    

@@ -168,10 +168,11 @@ def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Respo
 async def send_test_request(test_case: SingleTestCaseRequest) -> httpx.Response:
     method = test_case.method.lower()
     max_time_seconds = test_case.max_response_time_ms / 1000
+    methods_with_body = {"post", "put", "patch"}
     # I'm using kwargs here to conditionally add the JSON body to the request if it's needed
     request_kwargs: dict[str, Any] = { "timeout": max_time_seconds }
     # Add the json body to the request if it's a method that supports a body and if a body is provided in the test case
-    if method != "get" and test_case.body is not None: 
+    if method in methods_with_body and test_case.body is not None: 
         request_kwargs["json"] = test_case.body
     # Add headers to the request if headers are provided in the test case
     if test_case.headers is not None:
@@ -257,6 +258,17 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
         result.status = "failed"
         return result
     else: # If the request succeeded, check the response against the expected status code and assertions
+        try:
+            response_body = response.json()
+        except ValueError:
+            response_body = response.text
+
+        result.response = {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": response_body,
+        }
+        
         response_status_code = response.status_code
         expected_status_code = test_case.expected_status_code
 
@@ -278,10 +290,14 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
     return result
 
 async def run_multiple_test_case(test_cases: list[SingleTestCaseRequest]) -> list[SingleTestCaseResult]:
-    test_cases_results = await asyncio.gather(
-        *(run_single_test_case(test_case) for test_case in test_cases),
-        return_exceptions=True,
-    )
+    test_cases_results = []
+
+    for test_case in test_cases:
+        try:
+            test_result = await run_single_test_case(test_case)
+            test_cases_results.append(test_result)
+        except Exception as exc:
+            test_cases_results.append(exc)
 
     final_results: list[SingleTestCaseResult] = []
 
