@@ -5,4 +5,4 @@
 *.sqlite3
 __pycache__/
 *.py[cod]
-Database/data.db
+database/data.db

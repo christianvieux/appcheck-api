@@ -1,8 +1,8 @@
-from Database.crud.base import BaseCRUD
-from Database.models import SavedTest, TestSuite, Target
+from database.crud.base import BaseCRUD
+from database.models import SmokeTest, TestSuite, Target
 
 
-class SavedTestCRUD(BaseCRUD):
+class SmokeTestCRUD(BaseCRUD):
     def suite_exists(self, db_connection, suite_id: int):
         return (
             db_connection
@@ -28,4 +28,4 @@ class SavedTestCRUD(BaseCRUD):
         )
 
 
-saved_test_crud = SavedTestCRUD(SavedTest)
+smoke_test_crud = SmokeTestCRUD(SmokeTest)

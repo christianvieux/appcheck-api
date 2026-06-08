@@ -1,20 +1,30 @@
-from fastapi import APIRouter, HTTPException
-from Database.crud.target import target_crud
+from fastapi import APIRouter, Depends, HTTPException
+from database.crud.target import target_crud
+from database.models import Project, Target
 from services.database import start_database_session
 from models.target import PostTargetRequestBody, UpdateTargetRequestBody
 from sqlalchemy.exc import SQLAlchemyError
+from services.auth import CurrentUser, get_current_user
 
 router = APIRouter()
 
 
 @router.post("/target", status_code=200)
-async def create_target(request_body: PostTargetRequestBody):
+async def create_target(
+    request_body: PostTargetRequestBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     database_session = start_database_session()
 
     try:
-        project = target_crud.project_exists(
-            database_session,
-            request_body.project_id,
+        project = (
+            database_session
+            .query(Project)
+            .filter(
+                Project.id == request_body.project_id,
+                Project.owner_id == current_user.id,
+            )
+            .first()
         )
 
         if not project:
@@ -33,10 +43,7 @@ async def create_target(request_body: PostTargetRequestBody):
             },
         )
 
-        return {
-            "message": "Target created!",
-            "target": new_target,
-        }
+        return new_target
 
     except HTTPException:
         raise
@@ -61,13 +68,21 @@ async def create_target(request_body: PostTargetRequestBody):
         database_session.close()
 
 @router.get("/project/{project_id}/targets", status_code=200)
-async def list_targets_for_project(project_id: int):
+async def list_targets_for_project(
+    project_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     database_session = start_database_session()
 
     try:
-        project = target_crud.project_exists(
-            database_session,
-            project_id,
+        project = (
+            database_session
+            .query(Project)
+            .filter(
+                Project.id == project_id,
+                Project.owner_id == current_user.id,
+            )
+            .first()
         )
 
         if not project:
@@ -104,13 +119,22 @@ async def list_targets_for_project(project_id: int):
         database_session.close()
 
 @router.get("/target/{target_id}", status_code=200)
-async def get_target(target_id: int):
+async def get_target(
+    target_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     database_session = start_database_session()
 
     try:
-        target = target_crud.read(
-            database_session,
-            target_id,
+        target = (
+            database_session
+            .query(Target)
+            .join(Project, Target.project_id == Project.id)
+            .filter(
+                Target.id == target_id,
+                Project.owner_id == current_user.id,
+            )
+            .first()
         )
 
         if not target:
@@ -119,9 +143,7 @@ async def get_target(target_id: int):
                 detail="Target not found.",
             )
 
-        return {
-            "target": target,
-        }
+        return target
 
     except HTTPException:
         raise
@@ -142,7 +164,11 @@ async def get_target(target_id: int):
         database_session.close()
 
 @router.put("/target/{target_id}", status_code=200)
-async def update_target(target_id: int, request_body: UpdateTargetRequestBody):
+async def update_target(
+    target_id: int,
+    request_body: UpdateTargetRequestBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     database_session = start_database_session()
 
     try:
@@ -151,22 +177,31 @@ async def update_target(target_id: int, request_body: UpdateTargetRequestBody):
         if "url" in update_data:
             update_data["url"] = str(update_data["url"])
 
-        updated_target = target_crud.update(
-            database_session,
-            target_id,
-            update_data,
+        target = (
+            database_session
+            .query(Target)
+            .join(Project, Target.project_id == Project.id)
+            .filter(
+                Target.id == target_id,
+                Project.owner_id == current_user.id,
+            )
+            .first()
         )
         
-        if not updated_target:
+        if not target:
             raise HTTPException(
                 status_code=404,
                 detail="Target not found.",
             )
 
-        return {
-            "message": "Target updated!",
-            "target": updated_target,
-        }
+        for key, value in update_data.items():
+            if value is not None:
+                setattr(target, key, value)
+
+        database_session.commit()
+        database_session.refresh(target)
+
+        return target
 
     except HTTPException:
         raise
@@ -191,13 +226,22 @@ async def update_target(target_id: int, request_body: UpdateTargetRequestBody):
         database_session.close()
 
 @router.delete("/target/{target_id}", status_code=200)
-async def delete_target(target_id: int):
+async def delete_target(
+    target_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     database_session = start_database_session()
 
     try:
-        deleted_target = target_crud.delete(
-            database_session,
-            target_id,
+        deleted_target = (
+            database_session
+            .query(Target)
+            .join(Project, Target.project_id == Project.id)
+            .filter(
+                Target.id == target_id,
+                Project.owner_id == current_user.id,
+            )
+            .first()
         )
 
         if not deleted_target:
@@ -205,6 +249,9 @@ async def delete_target(target_id: int):
                 status_code=404,
                 detail="Target not found.",
             )
+
+        database_session.delete(deleted_target)
+        database_session.commit()
 
         return {
             "message": "Target deleted!",

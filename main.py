@@ -2,13 +2,13 @@
 from fastapi import FastAPI
 
 # Import router endpoints
-from routes import ping, run_tests, project, target, test_suite, saved_test
+from routes import ping, smoke_tests, project, target, test_suite
 
 # Initialize FastAPI app
 app = FastAPI()
 
 # Include router endpoints
-endpoints = [ping, run_tests, project, target, test_suite, saved_test]
+endpoints = [ping, smoke_tests, project, target, test_suite]
 for endpoint in endpoints:
     app.include_router(endpoint.router)
 

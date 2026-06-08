@@ -6,6 +6,7 @@ from services.database import Base
 class Project(Base):
     __tablename__ = "projects"
     id            = Column(Integer, primary_key=True)
+    owner_id      = Column(String, nullable=True, index=True)
     name          = Column(String, nullable=False)
     description   = Column(String, nullable=True)
     created_at    = Column(DateTime, default=func.now())
@@ -34,7 +35,8 @@ class Target(Base):
     created_at                      = Column(DateTime, default=func.now())
     updated_at                      = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    saved_tests = relationship("SavedTest", back_populates="target")
+    smoke_tests = relationship("SmokeTest", back_populates="target")
+    test_results = relationship("TestResult", back_populates="target")
 
 class TestSuite(Base):
     __tablename__ = "test_suites"
@@ -52,10 +54,11 @@ class TestSuite(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    saved_tests = relationship("SavedTest", back_populates="suite")
+    smoke_tests = relationship("SmokeTest", back_populates="suite", lazy="selectin")
+    test_runs = relationship("TestRun", back_populates="suite", lazy="selectin")
 
-class SavedTest(Base):
-    __tablename__ = "saved_tests"
+class SmokeTest(Base):
+    __tablename__ = "smoke_tests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
@@ -87,5 +90,62 @@ class SavedTest(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    suite = relationship("TestSuite", back_populates="saved_tests")
-    target = relationship("Target", back_populates="saved_tests")
+    suite = relationship("TestSuite", back_populates="smoke_tests")
+    target = relationship("Target", back_populates="smoke_tests")
+    test_results = relationship("TestResult", back_populates="smoke_test")
+
+class TestRun(Base):
+    __tablename__ = "test_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    suite_id: Mapped[int] = mapped_column(
+        ForeignKey("test_suites.id"),
+        nullable=False
+    )
+
+    status = Column(String, nullable=False)
+    total_tests = Column(Integer, nullable=False)
+    passed_count = Column(Integer, nullable=False)
+    failed_count = Column(Integer, nullable=False)
+    duration_ms = Column(Integer, nullable=False)
+
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    suite = relationship("TestSuite", back_populates="test_runs")
+    results = relationship("TestResult", back_populates="test_run", lazy="selectin")
+
+class TestResult(Base):
+    __tablename__ = "test_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    test_run_id: Mapped[int] = mapped_column(
+        ForeignKey("test_runs.id"),
+        nullable=False
+    )
+
+    saved_test_id: Mapped[int] = mapped_column(
+        ForeignKey("smoke_tests.id"),
+        nullable=False
+    )
+
+    target_id: Mapped[int] = mapped_column(
+        ForeignKey("targets.id"),
+        nullable=False
+    )
+
+    status = Column(String, nullable=False)
+    status_code = Column(Integer, nullable=True)
+    expected_status_code = Column(Integer, nullable=False)
+    response_time_ms = Column(Integer, nullable=True)
+    failure_message = Column(String, nullable=True)
+    failure_details = Column(JSON, nullable=True)
+    assertion_results = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    test_run = relationship("TestRun", back_populates="results")
+    smoke_test = relationship("SmokeTest", back_populates="test_results")
+    target = relationship("Target", back_populates="test_results")

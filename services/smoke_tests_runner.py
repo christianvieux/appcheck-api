@@ -5,7 +5,7 @@ import asyncio
 import random
 
 from typing import Any, TypedDict
-from models.test_case import SingleAssertionModel, SingleTestCaseRequest, SingleTestCaseResult
+from models.smoke_tests import SingleAssertionModel, SingleSmokeTestRequest, SingleSmokeTestResult
 
 def every_item_matches(actual: Any, assertion: SingleAssertionModel) -> tuple[bool, str]:
     failure_details: list[str] = []
@@ -165,29 +165,29 @@ def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Respo
         else:
             return False, f"Unsupported assertion type: {assertion.type}"
     
-async def send_test_request(test_case: SingleTestCaseRequest) -> httpx.Response:
-    method = test_case.method.lower()
-    max_time_seconds = test_case.max_response_time_ms / 1000
+async def send_smoke_test_request(smoke_test: SingleSmokeTestRequest) -> httpx.Response:
+    method = smoke_test.method.lower()
+    max_time_seconds = smoke_test.max_response_time_ms / 1000
     methods_with_body = {"post", "put", "patch"}
     # I'm using kwargs here to conditionally add the JSON body to the request if it's needed
     request_kwargs: dict[str, Any] = { "timeout": max_time_seconds }
-    # Add the json body to the request if it's a method that supports a body and if a body is provided in the test case
-    if method in methods_with_body and test_case.body is not None: 
-        request_kwargs["json"] = test_case.body
-    # Add headers to the request if headers are provided in the test case
-    if test_case.headers is not None:
-        request_kwargs["headers"] = test_case.headers
-    # Add query parameters to the request if query parameters are provided in the test case
-    if test_case.query_params is not None:
-        request_kwargs["params"] = test_case.query_params
+    # Add the json body to the request if it's a method that supports a body and if a body is provided in the smoke test
+    if method in methods_with_body and smoke_test.body is not None: 
+        request_kwargs["json"] = smoke_test.body
+    # Add headers to the request if headers are provided in the smoke test
+    if smoke_test.headers is not None:
+        request_kwargs["headers"] = smoke_test.headers
+    # Add query parameters to the request if query parameters are provided in the smoke test
+    if smoke_test.query_params is not None:
+        request_kwargs["params"] = smoke_test.query_params
     
     async with httpx.AsyncClient() as client: # creates an async HTTP client and closes it when done
         method_func = getattr(client, method)
-        return await method_func(str(test_case.url), **request_kwargs,) 
+        return await method_func(str(smoke_test.url), **request_kwargs,) 
 
-async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCaseResult:
-    result = SingleTestCaseResult(
-        name=test_case.name,
+async def run_single_smoke_test(smoke_test: SingleSmokeTestRequest) -> SingleSmokeTestResult:
+    result = SingleSmokeTestResult(
+        name=smoke_test.name,
         status="passed",
         failure_details=[],
         )
@@ -240,10 +240,10 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
     # Charts for uptime, response time, failures, etc.
      
     try:
-        response = await send_test_request(test_case)
+        response = await send_smoke_test_request(smoke_test)
     except httpx.TimeoutException:
         result.status = "failed"
-        result.failure_details.append(f"Request timed out after {test_case.max_response_time_ms} ms.")
+        result.failure_details.append(f"Request timed out after {smoke_test.max_response_time_ms} ms.")
         return result
     except httpx.RequestError as exc:
         result.failure_details.append(
@@ -258,6 +258,8 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
         result.status = "failed"
         return result
     else: # If the request succeeded, check the response against the expected status code and assertions
+        result.response_time_ms = round(response.elapsed.total_seconds() * 1000)
+
         try:
             response_body = response.json()
         except ValueError:
@@ -270,14 +272,14 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
         }
         
         response_status_code = response.status_code
-        expected_status_code = test_case.expected_status_code
+        expected_status_code = smoke_test.expected_status_code
 
         # First check if the response status code matches the expected status code
         if response_status_code != expected_status_code: # I didn't check if it existed because it is a required field, so it should always exist
             result.failure_details.append(f"Response status code '{response_status_code}' does not match expected status code '{expected_status_code}'.")
         # Check assertions if assertions are provided
-        if test_case.assertions is not None:
-            assertions = test_case.assertions
+        if smoke_test.assertions is not None:
+            assertions = smoke_test.assertions
             
             for assertion in assertions:
                 assertion_passed, assertion_failure_detail = test_single_assertion(assertion, response)
@@ -289,23 +291,23 @@ async def run_single_test_case(test_case: SingleTestCaseRequest) -> SingleTestCa
 
     return result
 
-async def run_multiple_test_case(test_cases: list[SingleTestCaseRequest]) -> list[SingleTestCaseResult]:
-    test_cases_results = []
+async def run_multiple_smoke_tests(smoke_tests: list[SingleSmokeTestRequest]) -> list[SingleSmokeTestResult]:
+    smoke_tests_results = []
 
-    for test_case in test_cases:
+    for smoke_test in smoke_tests:
         try:
-            test_result = await run_single_test_case(test_case)
-            test_cases_results.append(test_result)
+            test_result = await run_single_smoke_test(smoke_test)
+            smoke_tests_results.append(test_result)
         except Exception as exc:
-            test_cases_results.append(exc)
+            smoke_tests_results.append(exc)
 
-    final_results: list[SingleTestCaseResult] = []
+    final_results: list[SingleSmokeTestResult] = []
 
-    for test_case, test_result in zip(test_cases, test_cases_results):
+    for smoke_test, test_result in zip(smoke_tests, smoke_tests_results):
         if isinstance(test_result, BaseException):
             final_results.append(
-                SingleTestCaseResult(
-                    name=test_case.name,
+                SingleSmokeTestResult(
+                    name=smoke_test.name,
                     status="failed",
                     failure_details=[
                         f"Unexpected test error: {str(test_result)}"

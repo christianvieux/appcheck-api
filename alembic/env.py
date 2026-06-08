@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os ; load_dotenv()
 # load database services
 from services.database import Base
-from Database import models
+from database import models
 
 
 

@@ -1,7 +1,5 @@
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, AnyUrl, PositiveInt, Field, field_validator, model_validator
-from enum import StrEnum
-
 
 HttpMethodAllowed     = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 NestedOperatorAllowed = Literal["every_item_matches", "some_item_matches"]
@@ -30,7 +28,6 @@ OPERATORS_THAT_NEED_VALUE = {
 AssertionOperatorAllowed = SimpleOperatorAllowed | NestedOperatorAllowed
 
 
-
 class RuleItemModel(BaseModel):
     path: str | None = Field(
         None,
@@ -56,7 +53,6 @@ class RuleItemModel(BaseModel):
             raise ValueError(f"Operator '{self.operator}' requires a value. in rule with path '{self.path}'")
 
         return self
-
 
 class SingleAssertionModel(BaseModel):
     type: Literal["json_body"] = Field(
@@ -98,11 +94,10 @@ class SingleAssertionModel(BaseModel):
 
         return self
 
-
-class SingleTestCaseRequest(BaseModel):
+class SingleSmokeTestRequest(BaseModel):
     name: str = Field(
         ...,
-        description="Name of the test case",
+        description="Name of the smoke test",
         examples=["Get user by ID"],
     )
 
@@ -155,7 +150,6 @@ class SingleTestCaseRequest(BaseModel):
         examples=[{"page": "1", "limit": "10"}],
     )
 
-    # This allows flexibility in how users specify the HTTP method (e.g., "get", "GET", "Get") and normalizes it to uppercase
     @field_validator("method", mode="before")
     @classmethod
     def normalize_method(cls, value):
@@ -163,33 +157,120 @@ class SingleTestCaseRequest(BaseModel):
             return value.upper()
         return value
 
-
-class RunTestsRequest(BaseModel):
-    test_cases: list[SingleTestCaseRequest] = Field(
+class RunSmokeTestsRequest(BaseModel):
+    smoke_tests: list[SingleSmokeTestRequest] = Field(
         ...,
-        description="List of test cases to run",
+        description="List of smoke tests to run",
     )
 
-
-class SingleTestCaseResult(BaseModel):
+class SingleSmokeTestResult(BaseModel):
     name: str = Field(
         ...,
-        description="Name of the test case",
+        description="Name of the smoke test",
         examples=["Get user by ID"],
     )
 
     status: Literal["passed", "failed"] = Field(
         ...,
-        description="Result status of the test case",
+        description="Result status of the smoke test",
         examples=["passed"],
     )
 
     response: dict[str, Any] | None = None
 
+    response_time_ms: int | None = None
+
     failure_details: list[str] = Field(
         default_factory=list,
-        description="List of failure messages if the test failed",
+        description="List of failure messages if the smoke test failed",
         examples=[["Expected status code 200, got 404"]],
     )
 
-    
+class SmokeTestCreate(BaseModel):
+    suite_id: int
+    target_id: int
+
+    name: str
+    description: Optional[str] = None
+
+    method: HttpMethodAllowed
+    path: str = Field(
+        ...,
+        description="Relative path for the target, like /health or /api/users"
+    )
+
+    headers: dict[str, str] | None = None
+    query_params: dict[str, str] | None = None
+    body: dict[str, Any] | None = None
+
+    expected_status: int = Field(..., gt=99, lt=600)
+    max_response_time_ms: PositiveInt = 30000
+
+    assertions: list[SingleAssertionModel] = Field(default_factory=list)
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def normalize_method(cls, value):
+        if isinstance(value, str):
+            return value.upper()
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value):
+        if not value.startswith("/"):
+            raise ValueError("Path must start with '/'. Example: /health")
+        return value
+
+class SmokeTestUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    method: Optional[HttpMethodAllowed] = None
+    path: Optional[str] = None
+
+    headers: Optional[dict[str, str]] = None
+    query_params: Optional[dict[str, str]] = None
+    body: Optional[dict[str, Any]] = None
+
+    expected_status: Optional[int] = Field(None, gt=99, lt=600)
+    max_response_time_ms: Optional[PositiveInt] = None
+
+    assertions: Optional[list[SingleAssertionModel]] = None
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def normalize_method(cls, value):
+        if isinstance(value, str):
+            return value.upper()
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value):
+        if value is not None and not value.startswith("/"):
+            raise ValueError("Path must start with '/'. Example: /health")
+        return value
+
+class SmokeTestResponse(BaseModel):
+    id: int
+    suite_id: int
+    target_id: int
+
+    name: str
+    description: Optional[str] = None
+
+    method: str
+    path: str
+
+    headers: dict[str, str] | None = None
+    query_params: dict[str, str] | None = None
+    body: dict[str, Any] | None = None
+
+    expected_status: int
+    max_response_time_ms: int
+
+    assertions: list[dict[str, Any]] | None = None
+
+    class Config:
+        from_attributes = True

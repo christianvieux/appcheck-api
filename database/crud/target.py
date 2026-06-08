@@ -1,5 +1,5 @@
-from Database.crud.base import BaseCRUD
-from Database.models import Target, Project
+from database.crud.base import BaseCRUD
+from database.models import Target, Project
 
 
 class TargetCRUD(BaseCRUD):

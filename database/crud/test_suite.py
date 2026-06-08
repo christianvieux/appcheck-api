@@ -1,5 +1,5 @@
-from Database.crud.base import BaseCRUD
-from Database.models import TestSuite, Target
+from database.crud.base import BaseCRUD
+from database.models import TestSuite, Target
 
 
 class TestSuiteCRUD(BaseCRUD):
