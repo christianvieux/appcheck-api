@@ -1,31 +1,15 @@
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, AnyUrl, PositiveInt, Field, field_validator, model_validator
+from pydantic import BaseModel, AnyUrl, ConfigDict, PositiveInt, Field, field_validator, model_validator
+
+from models.assertions import (
+    AssertionOperator,
+    operator_allowed_in_rules,
+    operator_requires_conditions,
+    operator_requires_value,
+)
+from models.smoke_test_run_result import RunSource, TriggeredBy
 
 HttpMethodAllowed     = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
-NestedOperatorAllowed = Literal["every_item_matches", "some_item_matches"]
-SimpleOperatorAllowed = Literal[
-    "equals",
-    "not_equals",
-    "exists",
-    "is_number",
-    "is_string",
-    "is_boolean",
-    "is_array",
-    "is_object",
-    "greater_than",
-    "less_than",
-    "contains",
-]
-
-OPERATORS_THAT_NEED_VALUE = {
-    "equals", 
-    "not_equals", 
-    "greater_than", 
-    "less_than", 
-    "contains"
-}
-
-AssertionOperatorAllowed = SimpleOperatorAllowed | NestedOperatorAllowed
 
 
 class RuleItemModel(BaseModel):
@@ -35,7 +19,7 @@ class RuleItemModel(BaseModel):
         examples=["data.user.role"],
     )
 
-    operator: SimpleOperatorAllowed = Field(
+    operator: AssertionOperator = Field(
         ...,
         description="The operator to use for this rule.",
         examples=["equals"],
@@ -49,8 +33,11 @@ class RuleItemModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_operator_requirements(self):
-        if self.operator in OPERATORS_THAT_NEED_VALUE and "value" not in self.model_fields_set:
-            raise ValueError(f"Operator '{self.operator}' requires a value. in rule with path '{self.path}'")
+        if not operator_allowed_in_rules(self.operator):
+            raise ValueError(f"Operator '{self.operator.value}' cannot be used in nested rules.")
+
+        if operator_requires_value(self.operator) and "value" not in self.model_fields_set:
+            raise ValueError(f"Operator '{self.operator.value}' requires a value. in rule with path '{self.path}'")
 
         return self
 
@@ -67,7 +54,7 @@ class SingleAssertionModel(BaseModel):
         examples=["data.user.id"],
     )
 
-    operator: AssertionOperatorAllowed = Field(
+    operator: AssertionOperator = Field(
         ...,
         description="The operator to use for this assertion.",
         examples=["equals"],
@@ -86,11 +73,11 @@ class SingleAssertionModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_operator_requirements(self):
-        if self.operator in OPERATORS_THAT_NEED_VALUE and "value" not in self.model_fields_set:
-            raise ValueError(f"Operator '{self.operator}' requires a value.")
+        if operator_requires_value(self.operator) and "value" not in self.model_fields_set:
+            raise ValueError(f"Operator '{self.operator.value}' requires a value.")
 
-        if self.operator in {"every_item_matches", "some_item_matches"} and not self.conditions:
-            raise ValueError(f"Operator '{self.operator}' requires conditions.")
+        if operator_requires_conditions(self.operator) and not self.conditions:
+            raise ValueError(f"Operator '{self.operator.value}' requires conditions.")
 
         return self
 
@@ -163,6 +150,53 @@ class RunSmokeTestsRequest(BaseModel):
         description="List of smoke tests to run",
     )
 
+
+class RunSavedSmokeTestsRequest(BaseModel):
+    smoke_test_ids: list[PositiveInt] = Field(
+        ...,
+        min_length=1,
+        description="Saved smoke test IDs to run for the authenticated user.",
+        examples=[[1, 2, 3]],
+    )
+
+    run_source: RunSource = Field(
+        ...,
+        description="What triggered the run group.",
+        examples=["suite"],
+    )
+
+    triggered_by: TriggeredBy = Field(
+        "manual",
+        description="Who or what initiated the run.",
+        examples=["manual"],
+    )
+
+
+class RunSavedSingleSmokeTestRequest(BaseModel):
+    smoke_test_id: PositiveInt = Field(
+        ...,
+        description="Saved smoke test ID to run for the authenticated user.",
+        examples=[1],
+    )
+
+    run_source: RunSource = Field(
+        ...,
+        description="What triggered the run.",
+        examples=["single"],
+    )
+
+    run_group_id: str | None = Field(
+        None,
+        description="Optional run group ID to associate this single run with.",
+        examples=["manual-check-2026-06-15"],
+    )
+
+    triggered_by: TriggeredBy = Field(
+        "manual",
+        description="Who or what initiated the run.",
+        examples=["manual"],
+    )
+
 class SingleSmokeTestResult(BaseModel):
     name: str = Field(
         ...,
@@ -188,7 +222,7 @@ class SingleSmokeTestResult(BaseModel):
 
 class SmokeTestCreate(BaseModel):
     suite_id: int
-    target_id: int
+    target_id: int | None = None
 
     name: str
     description: Optional[str] = None
@@ -253,6 +287,8 @@ class SmokeTestUpdate(BaseModel):
         return value
 
 class SmokeTestResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     suite_id: int
     target_id: int
@@ -271,6 +307,3 @@ class SmokeTestResponse(BaseModel):
     max_response_time_ms: int
 
     assertions: list[dict[str, Any]] | None = None
-
-    class Config:
-        from_attributes = True

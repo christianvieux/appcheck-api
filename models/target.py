@@ -1,11 +1,15 @@
+from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field, HttpUrl
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+
+from models.test_suite import TestSuiteResponse
 
 
 class TargetType(str, Enum):
-    web = "web"
+    web_app = "web_app"
     api = "api"
-    mobile = "mobile"
+    mobile_app = "mobile_app"
     network = "network"
 
 
@@ -20,38 +24,54 @@ BaseFields = {
     ),
     "name": Field(
         description="Name of the target",
-        examples=["Main Website"],
+        examples=["Production API"],
     ),
     "url": Field(
         description="URL of the target",
-        examples=["https://example.com"],
+        examples=["https://api.example.com"],
     ),
     "target_type": Field(
         description="Type of target",
-        examples=["web"],
+        examples=["api"],
+    ),
+    "description": Field(
+        default=None,
+        description="Description of the target",
+        examples=["Main production backend API"],
+    ),
+    "created_at": Field(
+        description="When the target was created",
+    ),
+    "updated_at": Field(
+        description="When the target was last updated",
     ),
 }
 
 
-class PostTargetRequestBody(BaseModel):
+class TargetCreate(BaseModel):
     project_id: int = BaseFields["project_id"]
     name: str = BaseFields["name"]
     url: HttpUrl = BaseFields["url"]
     target_type: TargetType = BaseFields["target_type"]
+    description: str | None = BaseFields["description"]
 
 
-class UpdateTargetRequestBody(BaseModel):
+class TargetUpdate(BaseModel):
     name: str | None = None
     url: HttpUrl | None = None
     target_type: TargetType | None = None
+    description: str | None = None
 
 
 class TargetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int = BaseFields["id"]
     project_id: int = BaseFields["project_id"]
     name: str = BaseFields["name"]
     url: str = BaseFields["url"]
     target_type: TargetType = BaseFields["target_type"]
-
-    class Config:
-        from_attributes = True
+    description: str | None = BaseFields["description"]
+    created_at: datetime = BaseFields["created_at"]
+    updated_at: datetime = BaseFields["updated_at"]
+    test_suites: list[TestSuiteResponse] = Field(default_factory=list)

@@ -6,11 +6,16 @@ from services.database import Base
 class Project(Base):
     __tablename__ = "projects"
     id            = Column(Integer, primary_key=True)
-    owner_id      = Column(String, nullable=True, index=True)
+    owner_id      = Column(String, nullable=False, index=True)
     name          = Column(String, nullable=False)
     description   = Column(String, nullable=True)
     created_at    = Column(DateTime, default=func.now())
     updated_at    = Column(DateTime, default=func.now(), onupdate=func.now())
+    run_results   = relationship(
+    "SmokeTestRunResult",
+    back_populates="project",
+    lazy="selectin",
+)
 
 class TargetType(str, enum.Enum):
     web_app    = "web_app"
@@ -35,8 +40,13 @@ class Target(Base):
     created_at                      = Column(DateTime, default=func.now())
     updated_at                      = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    test_suites = relationship("TestSuite", back_populates="target")
     smoke_tests = relationship("SmokeTest", back_populates="target")
-    test_results = relationship("TestResult", back_populates="target")
+    run_results = relationship(
+        "SmokeTestRunResult",
+        back_populates="target",
+        lazy="selectin",
+    )
 
 class TestSuite(Base):
     __tablename__ = "test_suites"
@@ -54,8 +64,9 @@ class TestSuite(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    target = relationship("Target", back_populates="test_suites")
     smoke_tests = relationship("SmokeTest", back_populates="suite", lazy="selectin")
-    test_runs = relationship("TestRun", back_populates="suite", lazy="selectin")
+    run_results = relationship("SmokeTestRunResult", back_populates="suite", lazy="selectin")
 
 class SmokeTest(Base):
     __tablename__ = "smoke_tests"
@@ -92,60 +103,70 @@ class SmokeTest(Base):
 
     suite = relationship("TestSuite", back_populates="smoke_tests")
     target = relationship("Target", back_populates="smoke_tests")
-    test_results = relationship("TestResult", back_populates="smoke_test")
+    run_results = relationship(
+    "SmokeTestRunResult",
+    back_populates="smoke_test",
+    lazy="selectin",
+)
 
-class TestRun(Base):
-    __tablename__ = "test_runs"
+class SmokeTestRunResult(Base):
+    __tablename__ = "smoke_test_run_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    run_group_id = Column(String, nullable=False, index=True)
+    owner_id = Column(String, nullable=False, index=True)
+
+    smoke_test_id: Mapped[int] = mapped_column(
+        ForeignKey("smoke_tests.id"),
+        nullable=False,
+        index=True,
+    )
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id"),
+        nullable=False,
+        index=True,
+    )
 
     suite_id: Mapped[int] = mapped_column(
         ForeignKey("test_suites.id"),
-        nullable=False
-    )
-
-    status = Column(String, nullable=False)
-    total_tests = Column(Integer, nullable=False)
-    passed_count = Column(Integer, nullable=False)
-    failed_count = Column(Integer, nullable=False)
-    duration_ms = Column(Integer, nullable=False)
-
-    started_at = Column(DateTime, nullable=False)
-    finished_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=func.now())
-
-    suite = relationship("TestSuite", back_populates="test_runs")
-    results = relationship("TestResult", back_populates="test_run", lazy="selectin")
-
-class TestResult(Base):
-    __tablename__ = "test_results"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-    test_run_id: Mapped[int] = mapped_column(
-        ForeignKey("test_runs.id"),
-        nullable=False
-    )
-
-    saved_test_id: Mapped[int] = mapped_column(
-        ForeignKey("smoke_tests.id"),
-        nullable=False
+        nullable=False,
+        index=True,
     )
 
     target_id: Mapped[int] = mapped_column(
         ForeignKey("targets.id"),
-        nullable=False
+        nullable=False,
+        index=True,
     )
+
+    run_source = Column(String, nullable=False, index=True)
+    triggered_by = Column(String, nullable=False, default="manual", index=True)
+
+    name_snapshot = Column(String, nullable=False)
+    method_snapshot = Column(String, nullable=False)
+    url_snapshot = Column(String, nullable=False)
+    path_snapshot = Column(String, nullable=False)
+    expected_status_snapshot = Column(Integer, nullable=False)
+    max_response_time_ms_snapshot = Column(Integer, nullable=False)
+    assertions_snapshot = Column(JSON, nullable=True)
+    headers_snapshot = Column(JSON, nullable=True)
+    query_params_snapshot = Column(JSON, nullable=True)
+    body_snapshot = Column(JSON, nullable=True)
 
     status = Column(String, nullable=False)
     status_code = Column(Integer, nullable=True)
-    expected_status_code = Column(Integer, nullable=False)
     response_time_ms = Column(Integer, nullable=True)
     failure_message = Column(String, nullable=True)
     failure_details = Column(JSON, nullable=True)
     assertion_results = Column(JSON, nullable=True)
+
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
-    test_run = relationship("TestRun", back_populates="results")
-    smoke_test = relationship("SmokeTest", back_populates="test_results")
-    target = relationship("Target", back_populates="test_results")
+    project = relationship("Project", back_populates="run_results")
+    target = relationship("Target", back_populates="run_results")
+    suite = relationship("TestSuite", back_populates="run_results")
+    smoke_test = relationship("SmokeTest", back_populates="run_results")

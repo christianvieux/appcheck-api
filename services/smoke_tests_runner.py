@@ -1,11 +1,13 @@
-import json
-
 import httpx
 import asyncio
 import random
 
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
+from models.assertions import ASSERTION_OPERATOR_METADATA, AssertionOperator
 from models.smoke_tests import SingleAssertionModel, SingleSmokeTestRequest, SingleSmokeTestResult
+
+
+OperatorHandler = Callable[[Any, Any], tuple[bool, str]]
 
 def every_item_matches(actual: Any, assertion: SingleAssertionModel) -> tuple[bool, str]:
     failure_details: list[str] = []
@@ -31,7 +33,7 @@ def every_item_matches(actual: Any, assertion: SingleAssertionModel) -> tuple[bo
 
             if not operator_passed:
                 failure_details.append(
-                    f"Item at index {item_index}, path '{item_check.path}', operator '{item_check.operator}': {operator_failure_detail}"
+                    f"Item at index {item_index}, path '{item_check.path}', operator '{item_check.operator.value}': {operator_failure_detail}"
                 )
 
     if failure_details:
@@ -65,7 +67,7 @@ def some_item_matches(actual: Any, assertion: SingleAssertionModel) -> tuple[boo
 
             if not operator_passed:
                 item_failure_details.append(
-                    f"Item at index {item_index}, path '{item_check.path}', operator '{item_check.operator}': {operator_failure_detail}"
+                    f"Item at index {item_index}, path '{item_check.path}', operator '{item_check.operator.value}': {operator_failure_detail}"
                 )
 
         if not item_failure_details:
@@ -84,28 +86,99 @@ def define_operator_result(
 
     return False, (failure_message or "")
 
-operator_map = {
-    "equals":             lambda actual, assertion: define_operator_result(actual == assertion.value, f"Expected {assertion.value!r} ({type(assertion.value).__name__}), " f"but got {actual!r} ({type(actual).__name__})"),
-    "not_equals":         lambda actual, assertion: define_operator_result(actual != assertion.value, f"Expected {assertion.value!r} ({type(assertion.value).__name__}) to not equal actual value {actual!r} ({type(actual).__name__})"),
-    "exists":             lambda actual, assertion: define_operator_result(actual is not None, f"Expected field to exist, but it was None"),
-    "is_number":          lambda actual, assertion: define_operator_result(isinstance(actual, (int, float)) and not isinstance(actual, bool), f"Expected a number, but got {type(actual).__name__}"),
-    "is_string":          lambda actual, assertion: define_operator_result(isinstance(actual, str), f"Expected a string, but got {type(actual).__name__}"),
-    "is_boolean":         lambda actual, assertion: define_operator_result(isinstance(actual, bool), f"Expected a boolean, but got {type(actual).__name__}"),
-    "is_array":           lambda actual, assertion: define_operator_result(isinstance(actual, list), f"Expected an array, but got {type(actual).__name__}"),
-    "is_object":          lambda actual, assertion: define_operator_result(isinstance(actual, dict), f"Expected an object, but got {type(actual).__name__}"),
-    "greater_than":       lambda actual, assertion: define_operator_result(isinstance(actual, (int, float)) and actual > assertion.value, f"Expected {assertion.value}, but got {actual}"),
-    "less_than":          lambda actual, assertion: define_operator_result(isinstance(actual, (int, float)) and actual < assertion.value, f"Expected {assertion.value}, but got {actual}"),
-    "contains" :          lambda actual, assertion: define_operator_result(
+def equals(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        actual == assertion.value,
+        f"Expected {assertion.value!r} ({type(assertion.value).__name__}), "
+        f"but got {actual!r} ({type(actual).__name__})",
+    )
+
+
+def not_equals(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        actual != assertion.value,
+        f"Expected {assertion.value!r} ({type(assertion.value).__name__}) to not equal actual value {actual!r} ({type(actual).__name__})",
+    )
+
+
+def exists(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(actual is not None, "Expected field to exist, but it was None")
+
+
+def is_number(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, (int, float)) and not isinstance(actual, bool),
+        f"Expected a number, but got {type(actual).__name__}",
+    )
+
+
+def is_string(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, str),
+        f"Expected a string, but got {type(actual).__name__}",
+    )
+
+
+def is_boolean(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, bool),
+        f"Expected a boolean, but got {type(actual).__name__}",
+    )
+
+
+def is_array(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, list),
+        f"Expected an array, but got {type(actual).__name__}",
+    )
+
+
+def is_object(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, dict),
+        f"Expected an object, but got {type(actual).__name__}",
+    )
+
+
+def greater_than(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, (int, float)) and actual > assertion.value,
+        f"Expected {assertion.value}, but got {actual}",
+    )
+
+
+def less_than(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
+        isinstance(actual, (int, float)) and actual < assertion.value,
+        f"Expected {assertion.value}, but got {actual}",
+    )
+
+
+def contains(actual: Any, assertion: Any) -> tuple[bool, str]:
+    return define_operator_result(
         (assertion.value in actual) if isinstance(actual, str) and isinstance(assertion.value, str)
         else (assertion.value in actual) if isinstance(actual, list)
         else (assertion.value in actual.values()) if isinstance(actual, dict)
         else False,
         f"Expected actual value '{actual}' to contain '{assertion.value}'."
-    ),
-    
-    "every_item_matches": every_item_matches,
-    "some_item_matches": some_item_matches,
-}
+    )
+
+
+def _build_operator_map() -> dict[AssertionOperator, OperatorHandler]:
+    operator_map: dict[AssertionOperator, OperatorHandler] = {}
+
+    for operator in ASSERTION_OPERATOR_METADATA:
+        handler = globals().get(operator.value)
+
+        if handler is None:
+            raise ValueError(f"Missing assertion operator handler: {operator.value}")
+
+        operator_map[operator] = handler
+
+    return operator_map
+
+
+operator_map = _build_operator_map()
 
 def getValueFromJsonPath(json: dict[str, Any], path: str) -> Any:
         path_segments = path.split(".")
@@ -125,12 +198,17 @@ def getValueFromJsonPath(json: dict[str, Any], path: str) -> Any:
                 raise KeyError(f"Path '{path}' does not exist in the JSON response.")
         return value
     
-def handle_operator(operator: str, actual_value: Any, assertion: Any) -> tuple[bool, str]:
+def handle_operator(operator: AssertionOperator | str, actual_value: Any, assertion: Any) -> tuple[bool, str]:
     # assertion can be either a SingleAssertionModel or a RuleItemModel depending on the operator
-    if operator in operator_map:
-        return operator_map[operator](actual_value, assertion)
-    else:
+    try:
+        assertion_operator = AssertionOperator(operator)
+    except ValueError:
         raise ValueError(f"Unsupported operator: {operator}")
+
+    if assertion_operator in operator_map:
+        return operator_map[assertion_operator](actual_value, assertion)
+
+    raise ValueError(f"Unsupported operator: {assertion_operator.value}")
 
 def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Response) -> tuple[bool, str]:
         if assertion.type == "json_body":
@@ -157,7 +235,7 @@ def test_single_assertion(assertion: SingleAssertionModel, response: httpx.Respo
                     return False, (
                         f"Assertion failed for JSON body.\n"
                         f"Path: '{assertion.path}'\n"
-                        f"Operator: '{assertion.operator}'\n"
+                        f"Operator: '{assertion.operator.value}'\n"
                         f"Details:\n{assertion_failure_message}"
                     )
             else:

@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
-from database.crud.target import target_crud
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.exc import SQLAlchemyError
+
+from database.crud.target import TARGET_RESPONSE_LOAD_OPTIONS, target_crud
 from database.models import Project, Target
 from services.database import start_database_session
-from models.target import PostTargetRequestBody, UpdateTargetRequestBody
-from sqlalchemy.exc import SQLAlchemyError
+from models.target import TargetCreate, TargetUpdate, TargetResponse
 from services.auth import CurrentUser, get_current_user
 
 router = APIRouter()
 
 
-@router.post("/target", status_code=200)
+@router.post("/target", status_code=200, response_model=TargetResponse)
 async def create_target(
-    request_body: PostTargetRequestBody,
+    request_body: TargetCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -40,10 +41,17 @@ async def create_target(
                 "name": request_body.name,
                 "url": str(request_body.url),
                 "target_type": request_body.target_type,
+                "description": request_body.description,
             },
         )
 
-        return new_target
+        return (
+            database_session
+            .query(Target)
+            .options(*TARGET_RESPONSE_LOAD_OPTIONS)
+            .filter(Target.id == new_target.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -67,7 +75,8 @@ async def create_target(
     finally:
         database_session.close()
 
-@router.get("/project/{project_id}/targets", status_code=200)
+
+@router.get("/project/{project_id}/targets", status_code=200, response_model=list[TargetResponse])
 async def list_targets_for_project(
     project_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -96,9 +105,7 @@ async def list_targets_for_project(
             project_id,
         )
 
-        return {
-            "targets": targets,
-        }
+        return targets
 
     except HTTPException:
         raise
@@ -118,7 +125,8 @@ async def list_targets_for_project(
     finally:
         database_session.close()
 
-@router.get("/target/{target_id}", status_code=200)
+
+@router.get("/target/{target_id}", status_code=200, response_model=TargetResponse)
 async def get_target(
     target_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -129,6 +137,7 @@ async def get_target(
         target = (
             database_session
             .query(Target)
+            .options(*TARGET_RESPONSE_LOAD_OPTIONS)
             .join(Project, Target.project_id == Project.id)
             .filter(
                 Target.id == target_id,
@@ -163,10 +172,11 @@ async def get_target(
     finally:
         database_session.close()
 
-@router.put("/target/{target_id}", status_code=200)
+
+@router.put("/target/{target_id}", status_code=200, response_model=TargetResponse)
 async def update_target(
     target_id: int,
-    request_body: UpdateTargetRequestBody,
+    request_body: TargetUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -174,12 +184,13 @@ async def update_target(
     try:
         update_data = request_body.model_dump(exclude_unset=True)
 
-        if "url" in update_data:
+        if "url" in update_data and update_data["url"] is not None:
             update_data["url"] = str(update_data["url"])
 
         target = (
             database_session
             .query(Target)
+            .options(*TARGET_RESPONSE_LOAD_OPTIONS)
             .join(Project, Target.project_id == Project.id)
             .filter(
                 Target.id == target_id,
@@ -187,7 +198,7 @@ async def update_target(
             )
             .first()
         )
-        
+
         if not target:
             raise HTTPException(
                 status_code=404,
@@ -199,9 +210,14 @@ async def update_target(
                 setattr(target, key, value)
 
         database_session.commit()
-        database_session.refresh(target)
 
-        return target
+        return (
+            database_session
+            .query(Target)
+            .options(*TARGET_RESPONSE_LOAD_OPTIONS)
+            .filter(Target.id == target.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -225,7 +241,8 @@ async def update_target(
     finally:
         database_session.close()
 
-@router.delete("/target/{target_id}", status_code=200)
+
+@router.delete("/target/{target_id}", status_code=204)
 async def delete_target(
     target_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -253,10 +270,7 @@ async def delete_target(
         database_session.delete(deleted_target)
         database_session.commit()
 
-        return {
-            "message": "Target deleted!",
-            "target": deleted_target,
-        }
+        return Response(status_code=204)
 
     except HTTPException:
         raise

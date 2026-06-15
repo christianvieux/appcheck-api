@@ -1,25 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
-from database.crud.test_suite import test_suite_crud
-from database.models import Project, Target, TestResult, TestRun, TestSuite
+from database.crud.test_suite import TEST_SUITE_RESPONSE_LOAD_OPTIONS, test_suite_crud
+from database.models import Project, Target, TestSuite
+from models.smoke_test_run_result import (
+    SmokeTestRunGroupResponse,
+    SmokeTestRunGroupSummaryResponse,
+    SmokeTestRunResultResponse,
+)
+from models.test_suite import TestSuiteCreate, TestSuiteResponse, TestSuiteUpdate
 from services.auth import CurrentUser, get_current_user
 from services.database import start_database_session
-from models.test_suite import (
-    PostTestSuiteRequestBody,
-    TestResultResponse,
-    TestRunDetailResponse,
-    TestRunResponse,
-    UpdateTestSuiteRequestBody,
-)
-from services.suite_runner import suite_runner
+from services.smoke_test_run_service import smoke_test_run_service
 
 router = APIRouter()
 
 
-@router.post("/test-suite", status_code=200)
+@router.post("/test-suite", status_code=200, response_model=TestSuiteResponse)
 async def create_test_suite(
-    request_body: PostTestSuiteRequestBody,
+    request_body: TestSuiteCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -51,7 +50,13 @@ async def create_test_suite(
             },
         )
 
-        return new_test_suite
+        return (
+            database_session
+            .query(TestSuite)
+            .options(*TEST_SUITE_RESPONSE_LOAD_OPTIONS)
+            .filter(TestSuite.id == new_test_suite.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -75,36 +80,31 @@ async def create_test_suite(
     finally:
         database_session.close()
 
-@router.post("/test-suite/{suite_id}/run", status_code=200, response_model=TestRunDetailResponse)
-async def run_smoke_test_suite(
+
+@router.get("/test-suite/{suite_id}/runs", status_code=200, response_model=list[SmokeTestRunGroupSummaryResponse])
+async def list_run_groups_for_suite(
     suite_id: int,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
 
     try:
-        suite_run_result = await suite_runner.run_smoke_suite(
+        return smoke_test_run_service.list_run_groups_for_suite(
             database_session,
             suite_id,
             current_user.id,
         )
 
-        return suite_run_result
-
     except HTTPException:
         raise
 
     except SQLAlchemyError:
-        database_session.rollback()
-
         raise HTTPException(
             status_code=500,
-            detail="Something went wrong while running the test suite.",
+            detail="Something went wrong while retrieving run groups.",
         )
 
     except Exception:
-        database_session.rollback()
-
         raise HTTPException(
             status_code=500,
             detail="Unexpected server error.",
@@ -113,41 +113,57 @@ async def run_smoke_test_suite(
     finally:
         database_session.close()
 
-@router.get("/test-suite/{suite_id}/runs", status_code=200, response_model=list[TestRunResponse])
-async def list_test_runs_for_suite(
-    suite_id: int,
+
+@router.get("/runs/{run_group_id}", status_code=200, response_model=SmokeTestRunGroupResponse)
+async def get_run_group(
+    run_group_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
 
     try:
-        suite = (
-            database_session
-            .query(TestSuite)
-            .join(Target, TestSuite.target_id == Target.id)
-            .join(Project, Target.project_id == Project.id)
-            .filter(TestSuite.id == suite_id)
-            .filter(Project.owner_id == current_user.id)
-            .first()
+        return smoke_test_run_service.get_run_group(
+            database_session,
+            run_group_id,
+            current_user.id,
         )
 
-        if not suite:
-            raise HTTPException(
-                status_code=404,
-                detail="Test suite not found.",
-            )
+    except HTTPException:
+        raise
 
-        test_runs = (
-            database_session
-            .query(TestRun)
-            .filter(TestRun.suite_id == suite_id)
-            .order_by(TestRun.created_at.desc(), TestRun.id.desc())
-            .all()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while retrieving the run group.",
+        )
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected server error.",
+        )
+
+    finally:
+        database_session.close()
+
+
+@router.get("/runs/{run_group_id}/results", status_code=200, response_model=list[SmokeTestRunResultResponse])
+async def list_results_for_run_group(
+    run_group_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    database_session = start_database_session()
+
+    try:
+        results = smoke_test_run_service.list_results_for_group(
+            database_session,
+            run_group_id,
+            current_user.id,
         )
 
         return [
-            suite_runner.serialize_test_run(test_run)
-            for test_run in test_runs
+            smoke_test_run_service.serialize_result(result)
+            for result in results
         ]
 
     except HTTPException:
@@ -156,7 +172,7 @@ async def list_test_runs_for_suite(
     except SQLAlchemyError:
         raise HTTPException(
             status_code=500,
-            detail="Something went wrong while retrieving test runs.",
+            detail="Something went wrong while retrieving run results.",
         )
 
     except Exception:
@@ -168,114 +184,8 @@ async def list_test_runs_for_suite(
     finally:
         database_session.close()
 
-@router.get("/runs/{run_id}", status_code=200, response_model=TestRunDetailResponse)
-async def get_test_run(
-    run_id: int,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    database_session = start_database_session()
 
-    try:
-        test_run = (
-            database_session
-            .query(TestRun)
-            .join(TestSuite, TestRun.suite_id == TestSuite.id)
-            .join(Target, TestSuite.target_id == Target.id)
-            .join(Project, Target.project_id == Project.id)
-            .filter(TestRun.id == run_id)
-            .filter(Project.owner_id == current_user.id)
-            .first()
-        )
-
-        if not test_run:
-            raise HTTPException(
-                status_code=404,
-                detail="Test run not found.",
-            )
-
-        return {
-            **suite_runner.serialize_test_run(test_run),
-            "results": [
-                suite_runner.serialize_test_result(result)
-                for result in test_run.results
-            ],
-        }
-
-    except HTTPException:
-        raise
-
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while retrieving the test run.",
-        )
-
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Unexpected server error.",
-        )
-
-    finally:
-        database_session.close()
-
-@router.get("/runs/{run_id}/results", status_code=200, response_model=list[TestResultResponse])
-async def list_test_results_for_run(
-    run_id: int,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    database_session = start_database_session()
-
-    try:
-        test_run = (
-            database_session
-            .query(TestRun)
-            .join(TestSuite, TestRun.suite_id == TestSuite.id)
-            .join(Target, TestSuite.target_id == Target.id)
-            .join(Project, Target.project_id == Project.id)
-            .filter(TestRun.id == run_id)
-            .filter(Project.owner_id == current_user.id)
-            .first()
-        )
-
-        if not test_run:
-            raise HTTPException(
-                status_code=404,
-                detail="Test run not found.",
-            )
-
-        test_results = (
-            database_session
-            .query(TestResult)
-            .filter(TestResult.test_run_id == run_id)
-            .order_by(TestResult.id.asc())
-            .all()
-        )
-
-        return [
-            suite_runner.serialize_test_result(test_result)
-            for test_result in test_results
-        ]
-
-    except HTTPException:
-        raise
-
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while retrieving test results.",
-        )
-
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Unexpected server error.",
-        )
-
-    finally:
-        database_session.close()
-
-@router.get("/target/{target_id}/test-suites", status_code=200)
+@router.get("/target/{target_id}/test-suites", status_code=200, response_model=list[TestSuiteResponse])
 async def list_test_suites_for_target(
     target_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -305,9 +215,7 @@ async def list_test_suites_for_target(
             target_id,
         )
 
-        return {
-            "test_suites": test_suites,
-        }
+        return test_suites
 
     except HTTPException:
         raise
@@ -327,7 +235,8 @@ async def list_test_suites_for_target(
     finally:
         database_session.close()
 
-@router.get("/test-suite/{test_suite_id}", status_code=200)
+
+@router.get("/test-suite/{test_suite_id}", status_code=200, response_model=TestSuiteResponse)
 async def get_test_suite(
     test_suite_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -338,6 +247,7 @@ async def get_test_suite(
         test_suite = (
             database_session
             .query(TestSuite)
+            .options(*TEST_SUITE_RESPONSE_LOAD_OPTIONS)
             .join(Target, TestSuite.target_id == Target.id)
             .join(Project, Target.project_id == Project.id)
             .filter(
@@ -373,10 +283,11 @@ async def get_test_suite(
     finally:
         database_session.close()
 
-@router.put("/test-suite/{test_suite_id}", status_code=200)
+
+@router.put("/test-suite/{test_suite_id}", status_code=200, response_model=TestSuiteResponse)
 async def update_test_suite(
     test_suite_id: int,
-    request_body: UpdateTestSuiteRequestBody,
+    request_body: TestSuiteUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -387,6 +298,7 @@ async def update_test_suite(
         test_suite = (
             database_session
             .query(TestSuite)
+            .options(*TEST_SUITE_RESPONSE_LOAD_OPTIONS)
             .join(Target, TestSuite.target_id == Target.id)
             .join(Project, Target.project_id == Project.id)
             .filter(
@@ -407,9 +319,14 @@ async def update_test_suite(
                 setattr(test_suite, key, value)
 
         database_session.commit()
-        database_session.refresh(test_suite)
 
-        return test_suite
+        return (
+            database_session
+            .query(TestSuite)
+            .options(*TEST_SUITE_RESPONSE_LOAD_OPTIONS)
+            .filter(TestSuite.id == test_suite.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -432,6 +349,7 @@ async def update_test_suite(
 
     finally:
         database_session.close()
+
 
 @router.delete("/test-suite/{test_suite_id}", status_code=200)
 async def delete_test_suite(

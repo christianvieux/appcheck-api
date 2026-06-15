@@ -1,18 +1,31 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
-from database.crud.smoke_test import smoke_test_crud
+from database.crud.smoke_test import SMOKE_TEST_RESPONSE_LOAD_OPTIONS, smoke_test_crud
 from database.models import Project, SmokeTest, Target, TestSuite
+from models.smoke_test_run_result import SmokeTestRunGroupResponse, SmokeTestRunResultResponse
+from models.smoke_tests import (
+    RunSavedSingleSmokeTestRequest,
+    RunSavedSmokeTestsRequest,
+    RunSmokeTestsRequest,
+    SingleSmokeTestRequest,
+    SmokeTestCreate,
+    SmokeTestResponse,
+    SmokeTestUpdate,
+)
 from services.auth import CurrentUser, get_current_user
 from services.database import start_database_session
-from services.smoke_tests_runner import run_multiple_smoke_tests as svc_run_multiple_smoke_tests, run_single_smoke_test as svc_run_single_smoke_test
-from models.smoke_tests import SmokeTestCreate, SmokeTestUpdate, RunSmokeTestsRequest, SingleSmokeTestRequest
+from services.smoke_test_run_service import smoke_test_run_service
+from services.smoke_tests_runner import (
+    run_multiple_smoke_tests as svc_run_multiple_smoke_tests,
+    run_single_smoke_test as svc_run_single_smoke_test,
+)
 
 
 router = APIRouter()
 
 
-@router.post("/smoke-test", status_code=200)
+@router.post("/smoke-test", status_code=200, response_model=SmokeTestResponse)
 async def create_smoke_test(
     request_body: SmokeTestCreate,
     current_user: CurrentUser = Depends(get_current_user),
@@ -38,28 +51,20 @@ async def create_smoke_test(
                 detail="Test suite not found.",
             )
 
-        target = (
-            database_session
-            .query(Target)
-            .join(Project, Target.project_id == Project.id)
-            .filter(
-                Target.id == request_body.target_id,
-                Project.owner_id == current_user.id,
-            )
-            .first()
-        )
-
-        if not target:
+        if (
+            request_body.target_id is not None
+            and request_body.target_id != suite.target_id
+        ):
             raise HTTPException(
-                status_code=404,
-                detail="Target not found.",
+                status_code=400,
+                detail="Smoke test target must match the test suite target.",
             )
 
         new_smoke_test = smoke_test_crud.create(
             database_session,
             {
                 "suite_id": request_body.suite_id,
-                "target_id": request_body.target_id,
+                "target_id": suite.target_id,
                 "name": request_body.name,
                 "description": request_body.description,
                 "method": request_body.method,
@@ -76,7 +81,13 @@ async def create_smoke_test(
             },
         )
 
-        return new_smoke_test
+        return (
+            database_session
+            .query(SmokeTest)
+            .options(*SMOKE_TEST_RESPONSE_LOAD_OPTIONS)
+            .filter(SmokeTest.id == new_smoke_test.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -101,7 +112,7 @@ async def create_smoke_test(
         database_session.close()
 
 
-@router.get("/test-suite/{suite_id}/smoke-tests", status_code=200)
+@router.get("/test-suite/{suite_id}/smoke-tests", status_code=200, response_model=list[SmokeTestResponse])
 async def list_smoke_tests_for_suite(
     suite_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -132,9 +143,7 @@ async def list_smoke_tests_for_suite(
             suite_id,
         )
 
-        return {
-            "smoke_tests": smoke_tests,
-        }
+        return smoke_tests
 
     except HTTPException:
         raise
@@ -155,7 +164,7 @@ async def list_smoke_tests_for_suite(
         database_session.close()
 
 
-@router.get("/smoke-test/{smoke_test_id}", status_code=200)
+@router.get("/smoke-test/{smoke_test_id}", status_code=200, response_model=SmokeTestResponse)
 async def get_smoke_test(
     smoke_test_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -166,6 +175,7 @@ async def get_smoke_test(
         smoke_test = (
             database_session
             .query(SmokeTest)
+            .options(*SMOKE_TEST_RESPONSE_LOAD_OPTIONS)
             .join(TestSuite, SmokeTest.suite_id == TestSuite.id)
             .join(Target, TestSuite.target_id == Target.id)
             .join(Project, Target.project_id == Project.id)
@@ -203,7 +213,7 @@ async def get_smoke_test(
         database_session.close()
 
 
-@router.put("/smoke-test/{smoke_test_id}", status_code=200)
+@router.put("/smoke-test/{smoke_test_id}", status_code=200, response_model=SmokeTestResponse)
 async def update_smoke_test(
     smoke_test_id: int,
     request_body: SmokeTestUpdate,
@@ -223,6 +233,7 @@ async def update_smoke_test(
         smoke_test = (
             database_session
             .query(SmokeTest)
+            .options(*SMOKE_TEST_RESPONSE_LOAD_OPTIONS)
             .join(TestSuite, SmokeTest.suite_id == TestSuite.id)
             .join(Target, TestSuite.target_id == Target.id)
             .join(Project, Target.project_id == Project.id)
@@ -244,9 +255,14 @@ async def update_smoke_test(
                 setattr(smoke_test, key, value)
 
         database_session.commit()
-        database_session.refresh(smoke_test)
 
-        return smoke_test
+        return (
+            database_session
+            .query(SmokeTest)
+            .options(*SMOKE_TEST_RESPONSE_LOAD_OPTIONS)
+            .filter(SmokeTest.id == smoke_test.id)
+            .first()
+        )
 
     except HTTPException:
         raise
@@ -329,19 +345,100 @@ async def delete_smoke_test(
         database_session.close()
 
 
-#
-@router.post("/run-smoke-tests", status_code=200) # better than "/health" :P
-async def run_smoke_tests(request: RunSmokeTestsRequest):
+@router.post("/user/run-smoke-tests", status_code=200, response_model=SmokeTestRunGroupResponse)
+async def run_saved_smoke_tests(
+    request: RunSavedSmokeTestsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    database_session = start_database_session()
 
+    try:
+        return await smoke_test_run_service.run_saved_smoke_tests(
+            db_connection=database_session,
+            smoke_test_ids=[int(smoke_test_id) for smoke_test_id in request.smoke_test_ids],
+            owner_id=current_user.id,
+            run_source=request.run_source,
+            triggered_by=request.triggered_by,
+        )
+
+    except HTTPException:
+        raise
+
+    except SQLAlchemyError:
+        database_session.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while running saved smoke tests.",
+        )
+
+    except Exception:
+        database_session.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected server error.",
+        )
+
+    finally:
+        database_session.close()
+
+
+@router.post("/user/run-single-smoke-test", status_code=200, response_model=SmokeTestRunResultResponse)
+async def run_saved_single_smoke_test(
+    request: RunSavedSingleSmokeTestRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    database_session = start_database_session()
+
+    try:
+        run_group = await smoke_test_run_service.run_saved_smoke_tests(
+            db_connection=database_session,
+            smoke_test_ids=[int(request.smoke_test_id)],
+            owner_id=current_user.id,
+            run_source=request.run_source,
+            triggered_by=request.triggered_by,
+            run_group_id=request.run_group_id,
+        )
+
+        return run_group["test_results"][0]
+
+    except HTTPException:
+        raise
+
+    except SQLAlchemyError:
+        database_session.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while running the saved smoke test.",
+        )
+
+    except Exception:
+        database_session.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected server error.",
+        )
+
+    finally:
+        database_session.close()
+
+
+@router.post("/run-smoke-tests", status_code=200)
+async def run_smoke_tests(request: RunSmokeTestsRequest):
     tests_results = await svc_run_multiple_smoke_tests(request.smoke_tests)
 
-    # calculating summary
     total_tests = len(request.smoke_tests)
-    number_of_failed_tests = sum(1 for test_result in tests_results if test_result.status == "failed")
+    number_of_failed_tests = sum(
+        1
+        for test_result in tests_results
+        if test_result.status == "failed"
+    )
     number_of_passed_tests = total_tests - number_of_failed_tests
-    
     overall_status = "failed" if number_of_failed_tests > 0 else "passed"
-    message = "Test run completed. " +(
+    message = "Test run completed. " + (
         "All smoke tests passed."
         if number_of_failed_tests == 0
         else "Some smoke tests failed."
@@ -354,11 +451,11 @@ async def run_smoke_tests(request: RunSmokeTestsRequest):
         "summary": {
             "passed": number_of_passed_tests,
             "failed": number_of_failed_tests,
-            "total" : total_tests,
-            },
-        }
+            "total": total_tests,
+        },
+    }
+
 
 @router.post("/run-single-smoke-test", status_code=200)
 async def run_single_smoke_test(smoke_test: SingleSmokeTestRequest):
-    test_result = await svc_run_single_smoke_test(smoke_test)
-    return test_result  # return the single smoke test result
+    return await svc_run_single_smoke_test(smoke_test)

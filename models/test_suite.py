@@ -1,48 +1,54 @@
 from datetime import datetime
-from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from models.smoke_tests import SmokeTestResponse
 
 
-class PostTestSuiteRequestBody(BaseModel):
-    target_id: int
-    name: str
-    description: Optional[str] = None
+BaseFields = {
+    "id": Field(
+        description="ID of the test suite",
+        examples=[1],
+    ),
+    "target_id": Field(
+        description="ID of the target this suite belongs to",
+        examples=[1],
+    ),
+    "name": Field(
+        description="Name of the test suite",
+        examples=["Health Checks"],
+    ),
+    "description": Field(
+        default=None,
+        description="Description of the test suite",
+        examples=["Smoke tests for basic health endpoints"],
+    ),
+    "created_at": Field(
+        description="When the test suite was created",
+    ),
+    "updated_at": Field(
+        description="When the test suite was last updated",
+    ),
+}
 
 
-class UpdateTestSuiteRequestBody(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+class TestSuiteCreate(BaseModel):
+    target_id: int = BaseFields["target_id"]
+    name: str = BaseFields["name"]
+    description: str | None = BaseFields["description"]
 
 
-class TestResultResponse(BaseModel):
-    id: int
-    test_run_id: int
-    saved_test_id: int
-    target_id: int
+class TestSuiteUpdate(BaseModel):
     name: str | None = None
-    status: Literal["passed", "failed"]
-    status_code: int | None = None
-    expected_status_code: int
-    response_time_ms: int | None = None
-    failure_message: str | None = None
-    failure_details: list[str] = Field(default_factory=list)
-    assertion_results: list[dict[str, Any]] | None = None
-    created_at: datetime | None = None
+    description: str | None = None
 
 
-class TestRunResponse(BaseModel):
-    run_id: int
-    suite_id: int
-    suite_name: str
-    status: Literal["passed", "failed"]
-    total_tests: int
-    passed_count: int
-    failed_count: int
-    duration_ms: int
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    created_at: datetime | None = None
+class TestSuiteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-
-class TestRunDetailResponse(TestRunResponse):
-    results: list[TestResultResponse] = Field(default_factory=list)
+    id: int = BaseFields["id"]
+    target_id: int = BaseFields["target_id"]
+    name: str = BaseFields["name"]
+    description: str | None = BaseFields["description"]
+    created_at: datetime = BaseFields["created_at"]
+    updated_at: datetime = BaseFields["updated_at"]
+    smoke_tests: list[SmokeTestResponse] = Field(default_factory=list)

@@ -1,16 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.exc import SQLAlchemyError
+
 from database.crud.project import project_crud
 from services.database import start_database_session
-from models.project import PostProjectRequestBody, UpdateProjectRequestBody
-from sqlalchemy.exc import SQLAlchemyError
+from models.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from services.auth import CurrentUser, get_current_user
 
 router = APIRouter()
 
 
-@router.post("/project", status_code=200)
+@router.post("/project", status_code=200, response_model=ProjectResponse)
 async def create_project(
-    request_body: PostProjectRequestBody,
+    request_body: ProjectCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -49,7 +50,8 @@ async def create_project(
     finally:
         database_session.close()
 
-@router.get("/projects", status_code=200)
+
+@router.get("/projects", status_code=200, response_model=list[ProjectResponse])
 async def list_projects(current_user: CurrentUser = Depends(get_current_user)):
     database_session = start_database_session()
 
@@ -61,9 +63,7 @@ async def list_projects(current_user: CurrentUser = Depends(get_current_user)):
             .all()
         )
 
-        return {
-            "projects": projects,
-        }
+        return projects
 
     except HTTPException:
         raise
@@ -83,7 +83,8 @@ async def list_projects(current_user: CurrentUser = Depends(get_current_user)):
     finally:
         database_session.close()
 
-@router.get("/project/{project_id}", status_code=200)
+
+@router.get("/project/{project_id}", status_code=200, response_model=ProjectResponse)
 async def get_project(
     project_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -127,10 +128,11 @@ async def get_project(
     finally:
         database_session.close()
 
-@router.put("/project/{project_id}", status_code=200)
+
+@router.put("/project/{project_id}", status_code=200, response_model=ProjectResponse)
 async def update_project(
     project_id: int,
-    request_body: UpdateProjectRequestBody,
+    request_body: ProjectUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     database_session = start_database_session()
@@ -185,7 +187,8 @@ async def update_project(
     finally:
         database_session.close()
 
-@router.delete("/project/{project_id}", status_code=200)
+
+@router.delete("/project/{project_id}", status_code=204)
 async def delete_project(
     project_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -212,10 +215,7 @@ async def delete_project(
         database_session.delete(deleted_project)
         database_session.commit()
 
-        return {
-            "message": "Project deleted!",
-            "project": deleted_project,
-        }
+        return Response(status_code=204)
 
     except HTTPException:
         raise

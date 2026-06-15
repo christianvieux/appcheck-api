@@ -79,10 +79,11 @@ class AuthRouteSplitTests(unittest.TestCase):
             "/smoke-test",
             "/smoke-test/{smoke_test_id}",
             "/test-suite/{suite_id}/smoke-tests",
-            "/test-suite/{suite_id}/run",
             "/test-suite/{suite_id}/runs",
-            "/runs/{run_id}",
-            "/runs/{run_id}/results",
+            "/runs/{run_group_id}",
+            "/runs/{run_group_id}/results",
+            "/user/run-smoke-tests",
+            "/user/run-single-smoke-test",
         }
 
         routes_by_path = {
